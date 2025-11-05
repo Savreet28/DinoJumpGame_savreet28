@@ -1,94 +1,67 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🦖 Fuzzy Logic Dino Jump Game</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🦖 Fuzzy Logic Dino Jump Game</title>
 
-    <!-- ✅ PyScript Setup -->
-    <link rel="stylesheet" href="https://pyscript.net/latest/pyscript.css" />
-    <script defer src="https://pyscript.net/latest/pyscript.js"></script>
+  <!-- ✅ PyScript CDN -->
+  <link rel="stylesheet" href="https://pyscript.net/releases/2024.11.1/core.css">
+  <script defer src="https://pyscript.net/releases/2024.11.1/core.js"></script>
 
-    <style>
-        body {
-            background-color: #fefae0;
-            color: #2b2d42;
-            font-family: "Comic Sans MS", cursive, sans-serif;
-            text-align: center;
-            padding: 20px;
-        }
-        h1 {
-            color: #d62828;
-        }
-        pre {
-            background: #f8edeb;
-            border-radius: 10px;
-            padding: 10px;
-            text-align: left;
-            display: inline-block;
-            font-size: 16px;
-        }
-    </style>
+  <style>
+    body {
+      background-color: #f7f7f7;
+      font-family: "Comic Sans MS", sans-serif;
+      text-align: center;
+      padding: 20px;
+    }
+    h1 {
+      color: #4CAF50;
+    }
+    pre {
+      background: #222;
+      color: #0f0;
+      padding: 15px;
+      border-radius: 10px;
+      text-align: left;
+      max-width: 700px;
+      margin: 20px auto;
+      overflow-x: auto;
+    }
+  </style>
 </head>
-
 <body>
-    <h1>🦖 Fuzzy Logic Dino Jump Game</h1>
-    <p>Watch how our cute AI dino decides how high to jump using fuzzy logic!</p>
+  <h1>🦖 Fuzzy Logic Dino Jump Game</h1>
+  <p>Watch how our cute AI dino decides how high to jump using fuzzy logic!</p>
 
-    <pre id="output"></pre>
+  <pre id="output">Loading game...</pre>
 
-    <!-- ✅ Python Code Starts -->
-    <py-script>
-import random
+  <script type="py">
+    import random
+    from pyscript import display
 
-print("🦖 Welcome to the Fuzzy Logic Dino Jump Game!")
-print("----------------------------------------------")
+    output = ""
 
-# Step 1: Define fuzzy membership functions
-def fuzzy_distance(d):
-    if d < 3:
-        return {"near": 1, "medium": 0, "far": 0}
-    elif 3 <= d <= 6:
-        return {"near": (6 - d) / 3, "medium": (d - 3) / 3, "far": 0}
-    else:
-        return {"near": 0, "medium": 0, "far": 1}
+    output += "🦖 Welcome to the Fuzzy Logic Dino Jump Game!\n"
+    output += "----------------------------------------------\n"
 
-def fuzzy_speed(s):
-    if s < 3:
-        return {"slow": 1, "medium": 0, "fast": 0}
-    elif 3 <= s <= 6:
-        return {"slow": (6 - s) / 3, "medium": (s - 3) / 3, "fast": 0}
-    else:
-        return {"slow": 0, "medium": 0, "fast": 1}
+    # Step 1: Define fuzzy membership functions
+    def fuzzy_distance(d):
+        if d < 3:
+            return {"near": 1, "medium": 0, "far": 0}
+        elif 3 <= d <= 6:
+            return {"near": (6 - d) / 3, "medium": (d - 3) / 3, "far": 0}
+        else:
+            return {"near": 0, "medium": 0, "far": 1}
 
-# Step 2: Define fuzzy rules
-def fuzzy_decision(distance, speed):
-    near, medium, far = distance["near"], distance["medium"], distance["far"]
-    slow, med, fast = speed["slow"], speed["medium"], speed["fast"]
+    def fuzzy_speed(s):
+        if s < 3:
+            return {"slow": 1, "medium": 0, "fast": 0}
+        elif 3 <= s <= 6:
+            return {"slow": (6 - s) / 3, "medium": (s - 3) / 3, "fast": 0}
+        else:
+            return {"slow": 0, "medium": 0, "fast": 1}
 
-    jump_low = medium * slow
-    jump_med = (medium * med) + (far * slow)
-    jump_high = (near * fast) + (near * med)
-
-    max_val = max(jump_low, jump_med, jump_high)
-    if max_val == jump_high:
-        return "High Jump 🦘"
-    elif max_val == jump_med:
-        return "Medium Jump 🐇"
-    else:
-        return "Low Jump 🐢"
-
-# Step 3: Run simulation for 25 targets
-for i in range(1, 26):
-    distance = random.uniform(1, 10)
-    speed = random.uniform(1, 10)
-
-    fuzzy_d = fuzzy_distance(distance)
-    fuzzy_s = fuzzy_speed(speed)
-    decision = fuzzy_decision(fuzzy_d, fuzzy_s)
-
-    print(f"🍎 Target {i}: Distance={distance:.1f}, Speed={speed:.1f} → {decision}")
-    </py-script>
-    <!-- ✅ Python Code Ends -->
-</body>
-</html>
+    # Step 2: Define fuzzy rules
+    def fuzzy_decisi_
