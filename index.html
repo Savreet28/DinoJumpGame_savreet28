@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Fuzzy Dino Jump Game</title>
+
+  <!-- PyScript -->
+  <link rel="stylesheet" href="https://pyscript.net/latest/pyscript.css" />
+  <script defer src="https://pyscript.net/latest/pyscript.js"></script>
+
+  <!-- your CSS file (we'll create next) -->
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>🦖 Fuzzy Dino Jump — Eat 25 Apples 🍎</h1>
+    <div id="hud">
+      <div id="score">Eaten: 0 / 25</div>
+      <div id="message">AI controlling dino using fuzzy logic — watch it play!</div>
+    </div>
+
+    <canvas id="game" width="720" height="240"></canvas>
+
+    <div class="controls">
+      <button id="toggleBtn">Toggle AI</button>
+      <button id="restartBtn">Restart</button>
+    </div>
+
+    <footer>Fuzzy Logic: distance & speed → jump decision</footer>
+  </div>
+
+  <!-- PyScript contains Python that interacts with the browser canvas -->
+  <py-script>
+from js import document, window, Image
+from pyodide.ffi import create_proxy
+import random, math, asyncio
+
+# --- Canvas setup ---
+canvas = document.getElementById("game")
+ctx = canvas.getContext("2d")
+W, H = canvas.width, canvas.height
+
+score_el = document.getElementById("score")
+msg_el = document.getElementById("message")
+toggle_btn = document.getElementById("toggleBtn")
+
+# images as inline SVG data URIs (simple cute sprites)
+dino_svg = "<svg xmlns='http://www.w3.org/2000/svg' width='120' height='80' viewBox='0 0 120 80'><rect rx='12' ry='12' width='120' height='80' fill='#86c232'/><circle cx='30' cy='30' r='8' fill='#fff'/><circle cx='30' cy='30' r='4' fill='#000'/><path d='M60 50 q20 -30 40 0' fill='#5aa027'/><text x='15' y='70' font-size='10' fill='#1b3b00'>DINO</text></svg>"
+apple_svg = "<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 64 64'><circle cx='32' cy='36' r='16' fill='#ff4d4d'/><path d='M36 18 q-2 -6 -8 -6 q-6 0 -8 6 q4 -2 12 0' fill='#74c476'/><circle cx='28' cy='34' r='6' fill='rgba(255,255,255,0.2)'/></svg>"
+
+dino_img = Image.new()
+dino_img.src = "data:image/svg+xml;utf8," + dino_svg
+apple_img = Image.new()
+apple_img.src = "data:image/svg+xml;utf8," + apple_svg
+
+# --- Game variables ---
+ground_y = H - 40
+dino = {"x": 60, "y": ground_y-60, "w": 80, "h": 60, "vy":0, "on_ground": True}
+gravity = 0.9
+jump_strength = -14
+
+apples = []
+score = 0
+target_score = 25
+game_over = False
+
+spawn_interval = 900  # ms approx
+last_spawn = 0
+
+ai_enabled = True  # AI auto-plays using fuzzy logic
+
+# --- Fuzzy logic helpers ---
+def fuzz_distance(dist):
+    """
+    dist: horizontal distance (apple.x - dino.x) in pixels
+    Returns membership degrees for near/medium/far (0..1)
+    We'll map pixel distances roughly:
+     - near: 0..120
+     - medium: 80..300
+     - far: 250+
+    """
+    # normalize to a 0..1 scale using piecewise triangles
+    d = dist
+    near = 0.0
+    medium = 0.0
+    far = 0.0
+
+    # near triangular: peak at 0, drop to 0 at 120
+    if d <= 0:
+        near = 1.0
+    elif 0 < d <= 120:
+        near = (120 - d) / 120
+    else:
+        near = 0.0
+
+    # medium triangular peaked around 190 (80..300)
+    if 80 < d < 190:
+        medium = (d - 80) / (190 - 80)
+    elif 190 <= d < 300:
+        medium = (300 - d) / (300 - 190)
+    else:
+        medium = 0.0
+
+    # far: grows after 250
+    if d >= 300:
+        far = 1.0
+    elif 250 <= d < 300:
+        far = (d - 250) / (300 - 250)
+    else:
+        far = 0.0
+
+    # clamp
+    return {"near": max(0, min(1, near)), "medium": max(0, min(1, medium)), "far": max(0, min(1, far))}
+
+def fuzz_speed(s):
+    """
+    s: apple speed (pixels/frame approx)
+    classify into slow/medium/fast (0..1)
+    """
+    slow = 0.0
+    medium = 0.0
+    fast = 0.0
+
+    if s <= 1.8:
+        slow = 1.0
+    elif 1.8 < s <= 3.0:
+        slow = (3.0 - s) / (3.0 - 1.8)
+    else:
+        slow = 0.0
+
+    if 2.0 < s < 3.2:
+        medium = (s - 2.0) / (3.2 - 2.0)
+    elif 3.2 <= s < 4.4:
+        medium = (4.4 - s) / (4.4 - 3.2)
+    else:
+        medium = 0.0
+
+    if s >= 4.0:
+        fast = 1.0
+    elif 3.4 <= s < 4.0:
+        fast = (s - 3.4) / (4.0 - 3.4)
+    else:
+        fast = 0.0
+
+    return {"slow": max(0, min(1, slow)), "medium": max(0, min(1, medium)), "fast": max(0, min(1, fast))}
+
+def fuzzy_infer(distance_deg, speed_deg):
+    """
+    Combine distance and speed fuzzy degrees into a jump confidence [0..1].
+    We'll use simple Mamdani-like min(rule_strength) and aggregate by max.
+    Rules (example):
+      - IF distance IS near AND speed IS fast  => jump HIGH (1.0)
+      - IF distance IS near AND speed IS medium => jump HIGH
+      - IF distance IS medium AND speed IS fast => jump MEDIUM
+      - IF distance IS medium AND speed IS medium => jump MEDIUM
+      - IF distance IS far => NO jump (low)
+    We'll map HIGH->1.0, MEDIUM->0.6, LOW->0.15 and aggregate.
+    """
+    near = distance_deg["near"]
+    med = distance_deg["medium"]
+    far = distance_deg["far"]
+
+    slow = speed_deg["slow"]
+    sp_med = speed_deg["medium"]
+    fast = speed_deg["fast"]
+
+    outputs = []
+
+    # Rule 1: near & fast -> HIGH
+    outputs.append(min(near, fast) * 1.0)
+    # Rule 2: near & medium -> HIGH
+    outputs.append(min(near, sp_med) * 1.0)
+    # Rule 3: medium & fast -> MEDIUM
+    outputs.append(min(med, fast) * 0.6)
+    # Rule 4: medium & medium -> MEDIUM
+    outputs.append(min(med, sp_med) * 0.6)
+    # Rule 5: far -> LOW
+    outputs.append(far * 0.15)
+    # Rule 6: near & slow -> MEDIUM (dino can time a small hop)
+    outputs.append(min(near, slow) * 0.6)
+    # Rule 7: medium & slow -> LOW
+    outputs.append(min(med, slow) * 0.2)
+
+    # aggregated confidence: take max of outputs
+    if not outputs:
+        return 0.0
+    return max(outputs)
+
+# --- Game functions ---
+def spawn_apple():
+    x = W + 10
+    y = ground_y - 30 + random.randint(-8, 8)
+    apple = {"x": x, "y": y, "w": 36, "h": 36, "speed": random.uniform(2.2, 4.2)}
+    apples.append(apple)
+
+def rects_collide(a, b):
+    return not (a["x"] + a["w"] < b["x"] or a["x"] > b["x"] + b["w"] or a["y"] + a["h"] < b["y"] or a["y"] > b["y"] + b["h"])
+
+def do_jump():
+    if dino["on_ground"] and not game_over:
+        dino["vy"] = jump_strength
+        dino["on_ground"] = False
+
+def restart(ev=None):
+    global apples, score, game_over, last_spawn
+    apples = []
+    score = 0
+    game_over = False
+    last_spawn = 0
+    dino["y"] = ground_y-60
+    dino["vy"] = 0
+    dino["on_ground"] = True
+    score_el.innerText = f"Eaten: {score} / {target_score}"
+    msg_el.innerText = "AI controlling dino using fuzzy rules — watch it play!"
+
+# attach buttons
+document.getElementById("restartBtn").addEventListener("click", create_proxy(restart))
+
+def toggle_ai(ev=None):
+    global ai_enabled
+    ai_enabled = not ai_enabled
+    toggle_btn.innerText = "AI: ON" if ai_enabled else "AI: OFF"
+    if not ai_enabled:
+        msg_el.innerText = "AI turned off — you can watch or later add manual controls."
+    else:
+        msg_el.innerText = "AI turned on — fuzzy decision-making active."
+document.getElementById("toggleBtn").addEventListener("click", create_proxy(toggle_ai))
+
+# keyboard: space to manually jump too (if AI off you can test)
+def key_handler(e):
+    if e.keyCode == 32:  # space
+        do_jump()
+document.addEventListener("keydown", create_proxy(key_handler))
+
+last_time = window.performance.now()
+
+def update(dt):
+    global last_spawn, score, game_over
+    if game_over:
+        return
+
+    # spawn apples periodically
+    now = window.performance.now()
+    if last_spawn == 0 or (now - last_spawn) > spawn_interval + random.randint(-300,300):
+        spawn_apple()
+        last_spawn = now
+
+    # dino physics
+    dino["vy"] += gravity * (dt/16.0)
+    dino["y"] += dino["vy"]
+    if dino["y"] >= ground_y-60:
+        dino["y"] = ground_y-60
+        dino["vy"] = 0
+        dino["on_ground"] = True
+
+    # apples update & collisions
+    for a in list(apples):
+        a["x"] -= a["speed"] * (dt/16.0)
+        if a["x"] + a["w"] < -10:
+            apples.remove(a)
+        else:
+            drect = {"x": dino["x"], "y": dino["y"], "w": dino["w"], "h": dino["h"]}
+            if rects_collide(drect, a):
+                apples.remove(a)
+                score += 1
+                score_el.innerText = f"Eaten: {score} / {target_score}"
+                msg_el.innerText = "Yum! (AI)"
+                if score >= target_score:
+                    game_over = True
+                    msg_el.innerText = "AI wins! 🎉 Tap Restart to play again."
+
+    # AI decision (fuzzy) - examine nearest apple
+    if ai_enabled and not game_over:
+        if apples:
+            nearest = min(apples, key=lambda ap: ap["x"])
+            dist_px = nearest["x"] - (dino["x"] + dino["w"]/2)
+            # ensure positive
+            if dist_px < 0:
+                dist_px = 0
+            distance_deg = fuzz_distance(dist_px)
+            speed_deg = fuzz_speed(nearest["speed"])
+            jump_conf = fuzzy_infer(distance_deg, speed_deg)
+            # threshold decision to jump
+            # higher jump_conf -> more urgent; try threshold of 0.55
+            if jump_conf >= 0.55:
+                do_jump()
+
+def draw():
+    # background
+    ctx.fillStyle = "#e9f5ff"
+    ctx.fillRect(0,0,W,H)
+    # ground
+    ctx.fillStyle = "#8fbf7f"
+    ctx.fillRect(0, ground_y, W, H-ground_y)
+    # dino
+    try:
+        ctx.drawImage(dino_img, dino["x"], dino["y"], dino["w"], dino["h"])
+    except Exception:
+        ctx.fillStyle = "#86c232"
+        ctx.fillRect(dino["x"], dino["y"], dino["w"], dino["h"])
+    # apples
+    for a in apples:
+        try:
+            ctx.drawImage(apple_img, a["x"], a["y"], a["w"], a["h"])
+        except Exception:
+            ctx.fillStyle = "#ff4d4d"
+            ctx.beginPath()
+            ctx.ellipse(a["x"]+a["w"]/2, a["y"]+a["h"]/2, a["w"]/2, a["h"]/2, 0, 0, 2*math.pi)
+            ctx.fill()
+
+async def game_loop(ts):
+    global last_time
+    now = ts
+    dt = now - last_time
+    last_time = now
+    update(dt)
+    draw()
+    window.requestAnimationFrame(create_proxy(game_loop))
+    await asyncio.sleep(0)
+
+# start
+restart(None)
+window.requestAnimationFrame(create_proxy(game_loop))
+
+  </py-script>
+</body>
+</html>
